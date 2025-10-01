@@ -27,7 +27,7 @@ def run_ml_for_target(target_col: str, train_df: pd.DataFrame, test_df: pd.DataF
 
 if __name__ == "__main__":
     # Load data once
-    yq = '2016_2'
+    yq = '2023'
     train_df = pd.read_parquet(f'training_data/pt_summary/{yq}.parquet')
     test_df = pd.read_parquet(f'test_data/pt_summary/{yq}.parquet')
     print(f"Train set shape: {train_df.shape}")
