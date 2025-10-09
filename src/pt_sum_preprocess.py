@@ -22,11 +22,23 @@ if __name__ == "__main__":
     df = pd.read_parquet('input_data/all_data_with_pt_summary.parquet')# .query("permno == 14593")
     logger.info(f"columns: {df.columns}")
     logger.info(f"Original data shape: {df.shape}")
+
     df['year'] = df['trading_day_et'].dt.year
     df['quarter'] = df['trading_day_et'].dt.quarter
 
+    # construct y variable
+    df['pt_return'] = df['medptg']/df['prc'] - 1
+    df['error'] = np.log(1 + df['pt_return']) - np.log(1 + df['fwd_ret_1y_excl_div'])
+
+    # put the lagged error as a feature, lagged by 1 year using trading_day_et
+    df['f_error_lag1y'] = df.groupby('permno')['error'].shift(252)
+    df['f_error_lag2y'] = df.groupby('permno')['error'].shift(252*2)
+    df['f_error_lag3y'] = df.groupby('permno')['error'].shift(252*3)
+    df.dropna(subset=['f_error_lag1y', 'f_error_lag2y', 'f_error_lag3y'], how='any', inplace=True)
+
     # drop row if the fwd_ret is missing
-    df = df.dropna(subset=['fwd_ret_1y_excl_div', 'medptg'], how='any')
+    df = df.dropna(subset=['fwd_ret_1y_excl_div', 'cum_ret_1y_excl_div', 'medptg'], how='any')
+    df.rename(columns={'cum_ret_1y_excl_div': 'f_cum_ret_1y_excl_div'}, inplace=True)
     # the forward return should be bigger than -1 (namely lost everything)
     df = df[df['fwd_ret_1y_excl_div'] > -1]
     # drop row if marketcap is prc < 1
@@ -57,12 +69,13 @@ if __name__ == "__main__":
     # impute missing values by cross-sectional median
     # select the columns that start with f_
     f_cols = [col for col in df_processed.columns if col.startswith('f_')]
-    df_processed[f_cols] = df_processed.groupby('trading_day_et')[f_cols].apply(lambda x: x.fillna(x.median())).reset_index(drop=True)
+    df_processed[f_cols] = (
+        df_processed.groupby("trading_day_et")[f_cols]
+        .transform(lambda x: x.fillna(x.median()))
+    )
 
-    # construct y variable
-    df_processed['pt_return'] = df_processed['medptg']/df_processed['prc'] - 1
-    df_processed['error'] = np.log(1 + df_processed['pt_return']) - np.log(1 + df_processed['fwd_ret_1y_excl_div'])
-    
+    logger.info(f"Processed data shape: {df_processed.shape}")
+
     # separate into train and test
     # use last three years to train and test on the coming quarter
     year_start = df_processed['year'].min()
@@ -71,25 +84,22 @@ if __name__ == "__main__":
     # For each year and quarter, create rolling training and test sets.
     # The training set consists of the previous three years (by quarter) up to but not including the current quarter.
     # The test set is the current year and quarter.
-    for year in range(year_start + 3, year_end + 1):
-        for quarter in range(1, 5):
-            logger.info(f"Processing rolling window for year={year}, quarter={quarter}")
-            last_three_years_yq = get_last_three_years_yq([year, quarter])
-            logger.info(f"Training set will include data from the following year-quarters: {last_three_years_yq}")
+    for year in range(year_start + 5, year_end + 1):
+        logger.info(f"Processing rolling window for year={year}")
+        last_x_years = [year-5, year - 4, year - 3, year - 2, year - 1]
+        logger.info(f"Training set will include data from the following years: {last_x_years}")
 
-            # Select rows where (year, quarter) is in last_three_years_yq for training
-            train_set = df_processed[
-                df_processed[['year', 'quarter']].apply(tuple, axis=1).isin([tuple(yq) for yq in last_three_years_yq])
-            ]
-            logger.info(f"Training set shape for {year}Q{quarter}: {train_set.shape}")
-            train_set.to_parquet(f'{training_data_dir}/{year}_{quarter}.parquet', index=False)
+        # Select rows where (year, quarter) is in last_three_years_yq for training
+        train_set = df_processed[df_processed['year'].isin(last_x_years)]
+        logger.info(f"Training set shape for {year}: {train_set.shape}")
+        train_set.to_parquet(f'{training_data_dir}/{year}.parquet', index=False)
 
-            # Select rows for the current year and quarter for testing
-            test_set = df_processed[
-                (df_processed['year'] == year) & (df_processed['quarter'] == quarter)
-            ]
-            logger.info(f"Test set shape for {year}Q{quarter}: {test_set.shape}")
-            test_set.to_parquet(f'{test_data_dir}/{year}_{quarter}.parquet', index=False)
+        # Select rows for the current year and quarter for testing
+        test_set = df_processed[
+            (df_processed['year'] == year)
+        ]
+        logger.info(f"Test set shape for {year}: {test_set.shape}")
+        test_set.to_parquet(f'{test_data_dir}/{year}.parquet', index=False)
 
 
 

@@ -257,10 +257,15 @@ class MLFramework:
             # Calculate metrics
             metrics = self._calculate_metrics(self.y_test, y_pred)
             test_metrics[name] = metrics
+
+            # store the predictions in the dataframe of the test set
+            self.test_df[f'y_pred_{name}'] = y_pred
             
             # Log metrics
             self._log_to_both("Test set metrics:", name)
             self._log_metrics(metrics)
+        
+        self.test_df['y_true'] = self.y_test
         
         # Save test metrics to CSV
         test_scores = []
@@ -278,5 +283,8 @@ class MLFramework:
             os.path.join(self.models_dir, 'oos_test_scores.csv'), 
             index=False
         )
+
+        # Save the test set to CSV
+        self.test_df.to_parquet(os.path.join(self.models_dir, 'oos_test_set.parquet'), index=False)
         
         return test_metrics
